@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#152d26"><title>طنجه | پنل عملیات</title>
+<link rel="stylesheet" href="style.css"><script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#page">رفتن به محتوا</a>
+<aside class="rail" id="rail"></aside>
+<button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="بستن منو" hidden></button>
+<div class="shell">
+<header class="top">
+  <div class="top-start"><button class="iconbtn mobile" id="toggle-nav" aria-label="باز کردن منو" aria-controls="rail" aria-expanded="false"></button><label class="branch-label" for="branch">مجموعه فعال</label><select id="branch" aria-label="انتخاب مجموعه"></select></div>
+  <div class="top-end"><label class="date" title="تاریخ گزارش"><span id="date-label"></span><input aria-label="تاریخ گزارش" id="day" type="date"></label><button class="iconbtn" id="notifications" aria-label="مشاهده مغایرت‌ها"></button><div class="avatar" title="نمای مدیریت">ط</div></div>
+</header>
+<main id="page" tabindex="-1"></main>
+<footer class="foot">پنل عملیات گروه طنجه <span>نسخه نمایشی · ذخیره در همین مرورگر</span></footer>
+</div>
+<dialog id="dialog"><form id="entry"></form></dialog>
+<div role="status" id="toast" class="toast"></div>
+</body>
+</html>
