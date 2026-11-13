@@ -1,0 +1,32 @@
+PASS All 8 original pages + presentation render for all 3 branches
+PASS All 9 original forms + purchase open; sale avoids item() collision
+PASS Missing menu is a controlled form error
+PASS Seed is coherent and stock never negative on its own dates
+PASS E2E purchase -> review -> approval -> linked receipt -> transfer -> sale -> waste
+PASS Duplicate sale and oversell are rejected without partial committing
+PASS Historical recipe snapshot and count snapshot remain stable
+PASS CSV-text import rejects all when any row invalid; preview before commit
+PASS Material + recipe additions are functional and names escaped
+PASS Date + branch filters and aggregate reconciliation use shared records
+PASS Malformed JSON and malformed structure preserved; writes blocked
+PASS All nine original submit handlers plus purchase save; import uses two phases
+PASS Presentation workspace preserves original key bytes
+{
+  "passed": 13,
+  "browserAcceptance": false,
+  "checks": [
+    "All 8 original pages + presentation render for all 3 branches",
+    "All 9 original forms + purchase open; sale avoids item() collision",
+    "Missing menu is a controlled form error",
+    "Seed is coherent and stock never negative on its own dates",
+    "E2E purchase -> review -> approval -> linked receipt -> transfer -> sale -> waste",
+    "Duplicate sale and oversell are rejected without partial committing",
+    "Historical recipe snapshot and count snapshot remain stable",
+    "CSV-text import rejects all when any row invalid; preview before commit",
+    "Material + recipe additions are functional and names escaped",
+    "Date + branch filters and aggregate reconciliation use shared records",
+    "Malformed JSON and malformed structure preserved; writes blocked",
+    "All nine original submit handlers plus purchase save; import uses two phases",
+    "Presentation workspace preserves original key bytes"
+  ]
+}

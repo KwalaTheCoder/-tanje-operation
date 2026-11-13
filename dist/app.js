@@ -42,34 +42,33 @@ const stockKeys=Object.keys(material), branchKeys=Object.keys(branches);
 const byDate=(a,b)=>b.date.localeCompare(a.date);
 const sum=(xs,fn)=>xs.reduce((t,x)=>t+fn(x),0);
 const round=n=>Math.round(n*1e6)/1e6;
-const key='tanje-operations-1';
+const legacyKey='tanje-operations-1', presentationKey='tanje-presentation-demo-1';
+let key=legacyKey, storageIssue='', saving=false, periodStart=offset(today,-6);
+try{if(new URLSearchParams(location.search).has('presentation'))key=presentationKey}catch{}
 function seed(){
-  const menu=Object.fromEntries(branchKeys.map(b=>[b,defaults[b].map(([name,cat,price,recipe,demo],i)=>({id:b+(i+1),name,cat,price,recipe,demo}))]));
-  const opening=Object.fromEntries(Object.keys(locations).map((b,idx)=>[b,Object.fromEntries(stockKeys.map((m,i)=>[m,(m==='bread'?310:150)+i*9-idx*11]))]));
-  const records=[];
-  const add=(type,b,days,rest)=>records.push({type,b,date:offset(today,days),...rest});
+  const menu=Object.fromEntries(branchKeys.map(b=>[b,defaults[b].map(([name,cat,price,recipe],i)=>({id:b+(i+1),name,cat,price,recipe:{...recipe},demo:true}))]));
+  const opening=Object.fromEntries(Object.keys(locations).map(loc=>[loc,Object.fromEntries(stockKeys.map((m,i)=>[m,m==='bread'?160:(loc==='central'?90:30)+i*4]))]));
+  const records=[], purchases=[];
+  const add=(type,b,date,rest)=>records.push({id:'sample-'+(records.length+1),type,b,date,sample:true,...rest});
   for(const [j,b] of branchKeys.entries()){
-    for(let i=-6;i<=0;i++){
-      const items=menu[b].filter(x=>Object.keys(x.recipe).length);
-      for(const [k,item] of items.entries()){
-        const qty=4+((i+6)*7+k*3+j*5)%15;
-        add('sale',b,i,{name:item.name,cat:item.cat,qty,price:item.price,recipe:item.recipe,method:salesTypes[k%3],ref:'نمونه'});
-      }
+    const id='sample-po-'+b;
+    purchases.push({id,b,date:offset(today,-2),m:'lamb',qty:10,price:material.lamb[3],supplier:'تأمین‌کننده نمونه',ref:'خرید-نمونه-'+b,status:'received',sample:true});
+    add('receive',b,offset(today,-2),{m:'lamb',ordered:10,qty:10,price:material.lamb[3],budget:10*material.lamb[3],other:0,ref:'رسید-'+b,purchaseId:id,note:'دریافت نمونه مرتبط با سفارش خرید'});
+    add('move',b,offset(today,-2),{m:'lamb',qty:8,ref:'حواله-'+b,note:'پخش نمونه به '+branches[b]});
+    for(let d=-6;d<=0;d++){
+      const item=menu[b].find(x=>Object.keys(x.recipe).length);
+      add('sale',b,offset(today,d),{item:item.id,name:item.name,cat:item.cat,qty:3+j,price:item.price,recipe:{...item.recipe},method:salesTypes[j],ref:'فروش-'+b+'-'+d});
     }
-    add('move',b,0,{m:'lamb',qty:24-j*5,note:'پخش صبح',ref:'پخش-۰۱'});
-    add('move',b,0,{m:'rice',qty:18-j*4,note:'پخش صبح',ref:'پخش-۰۱'});
-    add('move',b,-1,{m:'chicken',qty:16-j*3,note:'پخش عصر',ref:'پخش-۰۲'});
-    add('waste',b,0,{m:'tomato',qty:1+j*.35,use:'دورریز',note:'آسیب در آماده‌سازی'});
-    add('waste',b,0,{m:'rice',qty:2.3+j*.1,use:'غذای پرسنلی',note:'مازاد سالم با تأیید مسئول آشپزخانه'});
-    add('receive',b,0,{m:'lamb',qty:30-j*2,ordered:32-j*2,price:950000,budget:(32-j*2)*950000,other:0,note:'خرید صبح',ref:'خرید-۰'+(j+1)});
-    add('receive',b,0,{m:'rice',qty:40,ordered:40,price:230000,budget:9200000,other:0,note:'تأمین دوره‌ای',ref:'برنج-۰'+(j+1)});
+    add('waste',b,today,{m:'lamb',qty:.3,use:'دورریز',note:'افت آماده‌سازی نمونه؛ کسر مستقل از فروش'});
+    add('waste',b,today,{m:'rice',qty:.5,use:'غذای پرسنلی',note:'مصرف مستقیم مواد برای غذای پرسنلی نمونه'});
     const expected=balance({opening,records},b,today).lamb;
-    add('count',b,0,{m:'lamb',qty:round(expected-(j+1)*.7),staff:8-j,note:'شمارش پایان شیفت'});
+    add('count',b,today,{m:'lamb',qty:round(expected-.2),expected,staff:5,note:'شمارش نمونه؛ مغایرت فقط گزارش می‌شود'});
+    purchases.push({id:'pending-'+b,b,date:today,m:'rice',qty:12,price:material.rice[3],supplier:'تأمین‌کننده نمونه',ref:'درخواست-'+b,status:'submitted',sample:true});
   }
-  return {menu,opening,records};
+  return {schema:2,sample:true,openingDate:offset(today,-7),menu,opening,records,purchases,activity:[]};
 }
 function balance(state,b,day){
-  const result={...state.opening[b]};
+  const result=Object.fromEntries(Object.entries(state.opening[b]).map(([m,q])=>[m,state.openingDate&&day<state.openingDate?0:q]));
   for(const x of state.records){
     if(x.date>day)continue;
     if(x.type==='receive'&&b==='central')result[x.m]+=x.qty;
@@ -81,7 +80,15 @@ function balance(state,b,day){
   }
   return Object.fromEntries(Object.entries(result).map(([m,v])=>[m,round(v)]));
 }
-function loadState(){try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):seed()}catch{return seed()}}
+function validateState(state){
+  verify(state&&typeof state==='object'&&Array.isArray(state.records)&&state.menu&&state.opening,'ساختار داده ذخیره‌شده قابل خواندن نیست.');
+  for(const loc of Object.keys(locations))verify(state.opening[loc]&&stockKeys.every(m=>Number.isFinite(state.opening[loc][m])),'موجودی افتتاحیه ناقص است.');
+  for(const branch of branchKeys)verify(Array.isArray(state.menu[branch])&&state.menu[branch].every(x=>x&&typeof x.name==='string'&&x.recipe&&typeof x.recipe==='object'),'ساختار منو معتبر نیست.');
+  for(const x of state.records){verify(x&&branchKeys.includes(x.b)&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)&&['sale','receive','move','waste','count'].includes(x.type),'یک گردش ذخیره‌شده معتبر نیست.');verify(Number.isFinite(x.qty)&&x.qty>=0,'مقدار گردش معتبر نیست.');if(x.type==='sale')verify(x.recipe&&Number.isFinite(x.price)&&x.price>=0&&Object.entries(x.recipe).every(([m,q])=>(material[m]||state.custom?.[m])&&Number.isFinite(q)&&q>=0),'ماده یا مقدار دستور و قیمت فروش معتبر نیست.');else {verify(material[x.m]||state.custom?.[x.m],'ماده گردش شناخته نشد.');if(x.type==='receive')verify(['price','ordered','budget','other'].every(k=>Number.isFinite(x[k])&&x[k]>=0),'مبلغ رسید معتبر نیست.');}}
+  verify(!state.purchases||Array.isArray(state.purchases),'فهرست خرید ذخیره‌شده معتبر نیست.');
+  return state;
+}
+function loadState(){try{const raw=localStorage.getItem(key);return raw?validateState(JSON.parse(raw)):seed()}catch{storageIssue='داده ذخیره‌شده خوانده نشد؛ اصل آن حفظ شده است. پیش از ادامه خروجی پشتیبان بگیرید یا فضای ارائه مستقل را باز کنید.';return seed()}}
 let data=loadState(), b='tanje', day=today, view='overview', search='', sort='recent';
 const views={overview:['داشبورد','grid'],inventory:['انبار و خرید','box'],distribution:['پخش مواد','truck'],menu:['منو و پورشن','plate'],cash:['صندوق روزانه','wallet'],audit:['مغایرت‌ها','alert'],waste:['پرتی و غذای پرسنلی','leaf'],report:['گزارش کارفرما','report']};
 const paths={
@@ -108,13 +115,18 @@ const badge=(s,kind='')=>`<span class="badge ${kind}">${E(s)}</span>`;
 const unit=(m,q)=>N(q)+' '+material[m][1];
 const money=x=>N(x)+' تومان';
 const ref=x=>E(x.ref||'—');
-const rec=(type,date=day)=>data.records.filter(x=>x.b===b&&x.type===type&&x.date===date);
+const inPeriod=x=>x.date>=periodStart&&x.date<=day;
+const rec=(type,date)=>data.records.filter(x=>x.b===b&&x.type===type&&!x.supersededBy&&(date?x.date===date:inPeriod(x)));
+const referenceCost=x=>x.qty*material[x.m][3];
+const recipeCost=x=>sum(Object.entries(x.recipe||{}),([m,q])=>material[m]?q*x.qty*material[m][3]:0);
+const purchaseList=()=> (data.purchases||[]).filter(x=>x.b===b&&inPeriod(x));
+const metrics=(branch=b)=>{const rows=data.records.filter(x=>x.b===branch&&inPeriod(x)),sales=rows.filter(x=>x.type==='sale'), waste=rows.filter(x=>x.type==='waste');return {sales:gross(sales),cost:sum(sales,recipeCost),purchase:sum(rows.filter(x=>x.type==='receive'),x=>x.qty*x.price),waste:sum(waste.filter(x=>x.use==='دورریز'),referenceCost),staff:sum(waste.filter(x=>x.use==='غذای پرسنلی'),referenceCost),inventory:sum(Object.entries(balance(data,branch,day)),([m,q])=>q*material[m][3]),low:stockKeys.filter(m=>balance(data,branch,day)[m]<material[m][4]).length,pending:(data.purchases||[]).filter(x=>x.b===branch&&inPeriod(x)&&['draft','submitted','reviewed'].includes(x.status)).length};};
 const gross=items=>sum(items,x=>x.qty*x.price);
 const purchaseGap=x=>x.budget-x.qty*x.price-x.other;
 const missingQty=x=>round(x.ordered-x.qty);
-const counts=(date=day)=>rec('count',date).map(x=>{
-  const expected=balance(data,b,date)[x.m], delta=round(x.qty-expected);
-  return {...x,expected,delta,value:Math.round(Math.max(0,-delta)*material[x.m][3])};
+const counts=(date)=>rec('count',date).map(x=>{
+  const expected=x.expected??balance(data,b,x.date)[x.m],delta=round(x.qty-expected);
+  return {...x,expected,delta,value:Math.round(Math.abs(delta)*material[x.m][3])};
 });
 function table(headers,rows,empty='برای این تاریخ رکوردی ثبت نشده است.'){
   if(!rows.length)return `<div class="empty">${E(empty)}</div>`;
@@ -126,9 +138,10 @@ const head=(title,sub,actions='')=>`<div class="page-head"><div><small>${E(branc
 const stat=(label,value,measure,sub,icon,kind='')=>`<article><div class="stat-top">${E(label)}<span class="${kind}">${I(icon)}</span></div><strong class="stat-val">${E(value)}<small>${E(measure)}</small></strong><div class="stat-sub">${E(sub)}</div></article>`;
 const statRow=(...items)=>`<div class="stats">${items.join('')}</div>`;
 function chart(){
-  const series=Array.from({length:7},(_,i)=>offset(day,-i)).map(d=>[d,gross(rec('sale',d))]);
+  const chartStart=periodStart>offset(day,-6)?periodStart:offset(day,-6);
+  const series=Array.from({length:7},(_,i)=>offset(day,-6+i)).filter(d=>d>=chartStart).map(d=>[d,gross(rec('sale',d))]);
   const max=Math.max(1,...series.map(x=>x[1]));
-  return `<div class="legend">فروش ثبت‌شده · میلیون تومان</div><div class="chart" aria-label="فروش هفت روز اخیر">${series.map(([d,v])=>`<div class="barcol"><span>${N(Math.round(v/100000)/10)}</span><i class="bar" style="height:${v/max*95}px"></i><span>${D(d,true)}</span></div>`).join('')}</div>`;
+  return `<div class="legend">فروش ثبت‌شده · میلیون تومان</div><div class="chart" aria-label="فروش روزانه در حداکثر هفت روز پایانی بازه">${series.map(([d,v])=>`<div class="barcol"><span>${N(Math.round(v/100000)/10)}</span><i class="bar" style="height:${v/max*95}px"></i><span>${D(d,true)}</span></div>`).join('')}</div>`;
 }
 function note(title,sub,kind,icon='alert'){
   return `<div class="notice"><span class="notice-icon ${kind==='bad'?'red':''}">${I(icon,16)}</span><div><h3>${E(title)}</h3><p>${E(sub)}</p></div>${badge(kind==='bad'?'نیاز به بررسی':'ثبت شد',kind)}</div>`;
@@ -138,17 +151,19 @@ function alerts(){
     ...counts().filter(x=>x.delta).map(x=>note('مغایرت موجودی '+material[x.m][0],unit(x.m,Math.abs(x.delta))+(x.delta<0?' کسری در شمارش':' مازاد در شمارش'),'bad'))];
 }
 function overview(){
-  const sales=rec('sale'), issues=alerts(), loads=rec('receive'), moves=rec('move');
-  const arches=Array.from({length:7},(_,i)=>`<path d="M${10+i*37} 219V${133-i*8}q0-${36+i*2} ${50+i*12}-${65+i*3}q${50+i*12} ${29+i} ${50+i*12} ${65+i*3}v${106+i*5}"/>`).join('');
-  return `<section class="hero"><div class="hero-content"><div class="eyebrow"><span class="dot"></span> اتاق عملیات گروه طنجه</div><h1>نبض عملیات، در یک نگاه</h1><p>از رسید خرید تا فروش هر پرس، مسیر مواد و هزینه را برای هر مجموعه دنبال کنید.</p><div class="hero-buttons">${btn('ثبت بار ورودی','new:receive','amber','plus')}${btn('گزارش کارفرما','go:report','ghost','arrow')}</div></div><svg class="hero-art" viewBox="0 0 440 210" preserveAspectRatio="xMinYMax slice" fill="none" aria-hidden="true"><defs><pattern id="tiles" width="31" height="31" patternUnits="userSpaceOnUse"><path d="M0 15.5 15.5 0 31 15.5 15.5 31ZM10 15.5l5.5-5.5 5.5 5.5-5.5 5.5Z" stroke="currentColor" stroke-width=".55" opacity=".32"/></pattern></defs><rect width="440" height="210" fill="url(#tiles)"/><g stroke="currentColor" stroke-width="1.15" opacity=".76">${arches}</g><path d="M0 190h440M0 198h440" stroke="currentColor" opacity=".38"/></svg></section>`
-  +statRow(stat('فروش ثبت‌شده',N(gross(sales)),'تومان',N(sum(sales,x=>x.qty))+' آیتم فروخته‌شده','wallet'),stat('بار ورودی',N(loads.length),'رسید','دریافتی خرید این مجموعه','box','gold'),stat('پخش به مجموعه',N(moves.length),'ردیف','حواله‌های دریافتی از انبار مرکزی','truck'),stat('مغایرت‌های روز',N(issues.length),'مورد','خرید و شمارش موجودی','alert','red'))
-  +`<div class="grid">${card('روند فروش','هفت روز منتهی به تاریخ گزارش',chart(),btn('صندوق','go:cash','mini','arrow'))}${card('موارد نیازمند بررسی','مغایرت‌های تاریخ انتخابی',issues.join('')||note('مغایرتی در رکوردهای ثبت‌شده نیست','وضعیت را پس از ثبت شمارش دوباره بررسی کنید.','','check'),btn('جزئیات','go:audit','mini','arrow'))}</div>`
-  +card('آخرین گردش مواد','رسیدها و حواله‌های ثبت‌شده برای این مجموعه',table(['ماده','نوع گردش','مقدار','تاریخ','مرجع'],data.records.filter(x=>x.b===b&&x.date<=day&&['receive','move'].includes(x.type)).sort(byDate).slice(0,6).map(x=>[E(material[x.m][0]),badge(x.type==='receive'?'رسید خرید':'حواله پخش',x.type==='move'?'warn':''),unit(x.m,x.qty),D(x.date),ref(x)])));
+  const m=metrics(), issues=alerts();
+  return `<section class="hero"><div class="hero-content"><div class="eyebrow"><span class="dot"></span> نمونه قابل اجرای مدیریت عملیات</div><h1>هر تصمیم، پشتوانه یک گردش</h1><p>خرید، موجودی و مصرف شعبه را کنار فروش ببینید؛ اختلاف‌ها را پیش از جمع‌بندی روز پیدا کنید.</p><div class="hero-buttons">${btn('سناریوی پنج‌دقیقه‌ای','go:presentation','amber','arrow')}${btn('درخواست خرید','new:purchase','ghost','plus')}</div></div><div class="hero-summary"><span>شعبه انتخابی</span><strong>${E(branches[b])}</strong><small>${D(periodStart)} تا ${D(day)}</small><span class="badge">داده نمونه / ثبت محلی</span></div></section>`
+  +statRow(stat('ارزش موجودی',N(m.inventory),'تومان','مانده تا تاریخ پایان × بهای مرجع نمونه','box'),stat('خرید دوره',N(m.purchase),'تومان','مقدار دریافت‌شده × نرخ رسید','truck'),stat('فروش دوره',N(m.sales),'تومان','تعداد آیتم × قیمت ثبت‌شده','wallet'),stat('بهای مصرف مواد',N(m.cost),'تومان','پورشن زمان فروش × بهای مرجع نمونه','plate'))
+  +`<div class="decision-strip"><div><span>دورریز دوره</span><strong>${money(m.waste)}</strong></div><div><span>زیر آستانه تأمین</span><strong>${N(m.low)} ماده</strong></div><div><span>خرید در انتظار تأیید نمایشی</span><strong>${N(m.pending)} درخواست</strong></div><div><span>شمارش دارای اختلاف</span><strong>${N(counts().filter(x=>x.delta).length)} مورد</strong></div></div>`
+  +`<div class="grid">${card('فروش روزانه','حداکثر هفت روز پایانی بازه؛ واحد: میلیون تومان',chart(),btn('مشاهده صندوق','go:cash','mini','arrow'))}${card('اولویت بررسی مدیر','بر اساس رسید و شمارش شعبه انتخابی',issues.slice(0,4).join('')||info('در این بازه مغایرت ثبت‌شده‌ای وجود ندارد.'),btn('جزئیات مغایرت','go:audit','mini','arrow'))}</div>`
+  +branchPerformance()+card('آخرین گردش‌های مرتبط','همان داده‌هایی که شاخص‌ها از آن محاسبه می‌شوند.',table(['مرجع','نوع','موضوع','مقدار','تاریخ'],data.records.filter(x=>x.b===b&&inPeriod(x)).slice().sort(byDate).slice(0,6).map(x=>[ref(x),E(({sale:'فروش',receive:'دریافت',move:'پخش',waste:'مصرف خارج از فروش',count:'شمارش'})[x.type]),E(x.name||material[x.m]?.[0]||''),x.m?unit(x.m,x.qty):N(x.qty)+' آیتم',D(x.date)])));
 }
+function branchPerformance(){return card('وضعیت شعب در بازه انتخابی','جدول مقایسه همه شعب؛ مستقل از فیلتر شعبه بالای صفحه. مبالغ: تومان.',table(['شعبه','فروش','بهای مواد فروش','دورریز','درخواست باز'],branchKeys.map(branch=>{const m=metrics(branch);return [E(branches[branch]),money(m.sales),money(m.cost),money(m.waste),N(m.pending)]})));}
 function inventory(){
   const own=balance(data,b,day), central=balance(data,'central',day), rows=stockKeys.filter(m=>material[m][0].includes(search));
-  return head('انبار و خرید','ثبت مقدار تحویلی، دسته‌بندی مواد و بررسی بودجه خرید.',btn('افزودن ماده','new:material','','plus')+btn('ثبت بار ورودی','new:receive','primary','plus'))
+  return head('انبار و خرید','ثبت مقدار تحویلی، دسته‌بندی مواد و بررسی بودجه خرید.',btn('افزودن ماده','new:material','','plus')+btn('درخواست خرید','new:purchase','','plus')+btn('ثبت بار ورودی','new:receive','primary','plus'))
     +card('موجودی مواد اولیه','مانده سیستمی در پایان تاریخ انتخابی',table(['ماده','دسته‌بندی','انبار مرکزی','موجودی مجموعه','وضعیت مجموعه'],rows.map(m=>[E(material[m][0]),E(material[m][2]),unit(m,central[m]),unit(m,own[m]),own[m]<material[m][4]?badge('نیاز به تأمین','bad'):badge('موجود')]),'ماده‌ای با این نام پیدا نشد.'),`<input class="filter" id="search" placeholder="جست‌وجوی ماده…" aria-label="جست‌وجوی ماده" value="${E(search)}">`)
+    +purchasePanel()
     +card('رسیدهای خرید','بار به انبار مرکزی وارد می‌شود و با حواله پخش به موجودی مجموعه منتقل می‌شود.',table(['ماده','ثبت خرید','شمارش تحویل','بودجه','ارزش بار','تسویه‌نشده / مازاد هزینه','مرجع'],rec('receive').map(x=>[E(material[x.m][0]),unit(x.m,x.ordered),unit(x.m,x.qty),money(x.budget),money(x.qty*x.price),badge(money(purchaseGap(x)),purchaseGap(x)?'bad':''),ref(x)])));
 }
 function distribution(){
@@ -163,7 +178,7 @@ function menuPage(){
   const items=data.menu[b];
   return head('منو و پورشن','مقدار استاندارد هر ماده برای یک پرس در مجموعه انتخاب‌شده.',btn('افزودن آیتم','new:recipe','primary','plus'))
     +info('قیمت‌ها و دستورهای اولیه برای نمایش هستند. مقدارهای تأییدشده آشپزخانه را پیش از استفاده عملیاتی وارد کنید.')
-    +card('آیتم‌های منو',N(items.length)+' آیتم در این مجموعه',table(['آیتم','دسته','قیمت نمایشی / ثبت‌شده','مواد هر پرس','منبع','ویرایش'],items.map(x=>[E(x.name),category[x.cat],money(x.price),Object.entries(x.recipe).map(([m,v])=>E(material[m][0])+' '+unit(m,v)).join(' · ')||badge('تعریف نشده','warn'),badge(x.added?'ورودی کاربر':x.demo?'نمونه نمایشی':'منبع عمومی',x.demo?'warn':'neutral'),btn('ویرایش','recipe:'+x.id,'mini')])))
+    +card('آیتم‌های منو',N(items.length)+' آیتم در این مجموعه',table(['آیتم','دسته','قیمت نمایشی / ثبت‌شده','مواد هر پرس','منبع','ویرایش'],items.map(x=>[E(x.name),category[x.cat],money(x.price),Object.entries(x.recipe).map(([m,v])=>E(material[m][0])+' '+unit(m,v)).join(' · ')||badge('تعریف نشده','warn'),badge(x.added?'ثبت محلی کاربر':'نام برگرفته از منو؛ نرخ و پورشن نمونه','warn'),btn('ویرایش','recipe:'+x.id,'mini')])))
     +card('منابع منو','فهرست فعلی بخشی از منوی مجموعه‌هاست.',`<div class="actions"><a class="btn" target="_blank" rel="noopener" href="${sources[b][0]}">منوی رسمی مجموعه</a><a class="btn" target="_blank" rel="noopener" href="${sources[b][1]}">منبع عمومی تکمیلی</a></div>`);
 }
 function breakdown(items,values,field){
@@ -176,9 +191,10 @@ function breakdown(items,values,field){
 }
 function cash(){
   const sales=rec('sale'), amount=gross(sales), qty=sum(sales,x=>x.qty);
-  const prior=gross(rec('sale',offset(day,-1)));
-  return head('صندوق روزانه','تحلیل ریز فروش به تفکیک دسته و کانال پرداخت.',btn('ورود گزارش صندوق','new:saleCsv','','report')+btn('ثبت سفارش','new:sale','primary','plus'))
-    +statRow(stat('فروش ناخالص',N(amount),'تومان','جمع ردیف‌های ثبت‌شده','wallet'),stat('آیتم فروخته‌شده',N(qty),'عدد','تعداد پرس و آیتم','plate'),stat('میانگین هر آیتم',N(qty?Math.round(amount/qty):0),'تومان','فروش تقسیم بر تعداد آیتم','trend','gold'),stat('تغییر نسبت به روز قبل',prior?N(Math.round((amount/prior-1)*100))+'٪':'—','',prior?'مبنای مقایسه: فروش روز قبل':'فروش مقایسه‌ای در دسترس نیست','calendar'))
+  const span=Math.max(1,Math.round((Date.parse(day)-Date.parse(periodStart))/86400000)+1);
+  const prior=gross(data.records.filter(x=>x.b===b&&x.type==='sale'&&x.date>=offset(periodStart,-span)&&x.date<periodStart));
+  return head('صندوق روزانه','تحلیل ریز فروش در بازه انتخابی، به تفکیک دسته و کانال پرداخت.',btn('ورود گزارش صندوق','new:saleCsv','','report')+btn('ثبت سفارش','new:sale','primary','plus'))
+    +statRow(stat('فروش ناخالص',N(amount),'تومان','جمع ردیف‌های ثبت‌شده','wallet'),stat('آیتم فروخته‌شده',N(qty),'عدد','تعداد پرس و آیتم','plate'),stat('میانگین هر آیتم',N(qty?Math.round(amount/qty):0),'تومان','فروش تقسیم بر تعداد آیتم','trend','gold'),stat('تغییر نسبت به بازه قبل',prior?N(Math.round((amount/prior-1)*100))+'٪':'—','',prior?'مبنای مقایسه: بازه قبلی با طول برابر':'فروش مقایسه‌ای در دسترس نیست','calendar'))
     +`<div class="grid">${card('فروش بر اساس دسته','سهم هر گروه از فروش',table(['دسته','تعداد','مبلغ','سهم'],breakdown(sales,category,'cat')))}${card('روش‌های پرداخت','توزیع دریافتی ثبت‌شده',table(['کانال','تعداد','مبلغ','سهم'],breakdown(sales,salesTypes,'method')))}</div>`
     +card('ردیف‌های سفارش','مصرف هر آیتم با پورشن زمان ثبت محاسبه می‌شود.',table(['آیتم','دسته','تعداد','قیمت واحد','فروش','پرداخت','مرجع'],sales.slice().reverse().map(x=>[E(x.name),category[x.cat],N(x.qty),money(x.price),money(x.price*x.qty),E(x.method),ref(x)])));
 }
@@ -186,8 +202,8 @@ function audit(){
   const checks=counts(), issues=rec('receive').filter(x=>purchaseGap(x)||missingQty(x));
   return head('تطبیق و مغایرت‌ها','کنترل بودجه خرید و اختلاف شمارش فیزیکی با موجودی سیستم.',btn('ثبت شمارش','new:count','primary','plus'))
     +card('مغایرت خرید','بودجه تسویه‌نشده برابر است با بودجه منهای ارزش تحویل و مبالغ مستند.',table(['ماده','اختلاف سفارش و تحویل','بودجه','ارزش تحویل','مبالغ مستند','اختلاف بودجه','مرجع'],issues.map(x=>[E(material[x.m][0]),unit(x.m,missingQty(x)),money(x.budget),money(x.qty*x.price),money(x.other),badge(money(purchaseGap(x)),'bad'),ref(x)])))
-    +card('شمارش فیزیکی','مبنای مقایسه، مانده سیستمی پایان همان روز است.',table(['ماده','سیستم','شمارش','اختلاف شمارش','ارزش کسری تخمینی','پرسنل','سهم پیشنهادی هر نفر'],checks.map(x=>[E(material[x.m][0]),unit(x.m,x.expected),unit(x.m,x.qty),badge(unit(x.m,x.delta),x.delta?'bad':''),money(x.value),N(x.staff),money(Math.round(x.value/x.staff))])))
-    +info('سهم پیشنهادی فقط برای بررسی مدیر نمایش داده می‌شود. برای محاسبه ارزش کسری از بهای واحد مرجع نمایشی استفاده شده است.');
+    +card('شمارش فیزیکی','برای ثبت‌های جدید، مانده زمان شمارش ثابت می‌ماند؛ شمارش بعدی تاریخچه قبلی را حفظ می‌کند.',table(['ماده','سیستم هنگام ثبت','شمارش','اختلاف شمارش','ارزش اختلاف مرجع','پرسنل','توضیح'],checks.map(x=>[E(material[x.m][0]),unit(x.m,x.expected),unit(x.m,x.qty),badge(unit(x.m,x.delta),x.delta?'bad':''),money(x.value),N(x.staff),E(x.note||'—')])))
+    +info('مغایرت فقط برای بررسی ثبت می‌شود؛ کسر از حقوق، بدهی کارمند و اصلاح موجودی در این دمو اجرا نمی‌شود. ارزش اختلاف بر پایه بهای مرجع نمونه است.');
 }
 function waste(){
   const rows=rec('waste'), cost=x=>x.qty*material[x.m][3];
@@ -196,26 +212,39 @@ function waste(){
     +card('گردش مصرف خارج از فروش','هر ثبت، موجودی همان مجموعه را به اندازه مقدار ثبت‌شده کاهش می‌دهد.',table(['ماده','مقدار','مصرف','ارزش مرجع','توضیح'],rows.map(x=>[E(material[x.m][0]),unit(x.m,x.qty),badge(x.use,x.use==='دورریز'?'bad':''),money(Math.round(cost(x))),E(x.note)])));
 }
 function report(){
-  const sales=rec('sale'), amount=gross(sales), prev=gross(rec('sale',offset(day,-1))), issue=alerts();
-  const cats=breakdown(sales,category,'cat');
-  const lead=category.map((name,i)=>[name,gross(sales.filter(x=>x.cat===i))]).sort((a,z)=>z[1]-a[1])[0];
-  const cost=Math.round(sum(rec('waste').filter(x=>x.use==='دورریز'),x=>x.qty*material[x.m][3]));
-  const staff=Math.round(sum(rec('waste').filter(x=>x.use==='غذای پرسنلی'),x=>x.qty*material[x.m][3]));
-  const open=sum(rec('receive'),x=>Math.max(0,purchaseGap(x)));
-  return head('گزارش روزانه کارفرما','نمای ارائه برای مرور فروش، گردش مواد و هزینه‌های نیازمند بررسی.',btn('چاپ / ذخیره PDF','print','primary','download'))
-    +info('گزارش نسخه نمایشی است و ممکن است شامل داده‌های نمونه باشد.')
-    +statRow(stat('فروش روز',N(amount),'تومان',prev?'روز قبل '+money(prev):'بدون فروش مقایسه‌ای','wallet'),stat('بودجه تسویه‌نشده',N(open),'تومان','جمع اختلاف مثبت رسیدهای خرید','alert','red'),stat('ارزش دورریز',N(cost),'تومان','بر اساس بهای مرجع','leaf','gold'),stat('مصرف پرسنلی',N(staff),'تومان','مازاد سالم ثبت‌شده','plate'))
-    +`<div class="grid">${card('ترکیب فروش','فروش ناخالص ثبت‌شده',table(['دسته','تعداد','مبلغ','سهم'],cats))}${card('خلاصه مدیریتی','بر مبنای داده‌های همین تاریخ',`<div class="notice"><span class="notice-icon">${I('trend')}</span><div><h3>${amount?'بیشترین سهم فروش با '+E(lead[0])+' است':'فروشی برای این تاریخ ثبت نشده است'}</h3><p>${amount?N(100*lead[1]/amount)+'٪ از فروش ثبت‌شده':D(day)}</p></div></div>${issue.join('')||note('مغایرت ثبت‌شده‌ای وجود ندارد','نتیجه بر اساس رسیدها و شمارش‌های ثبت‌شده است.','','check')}`)}</div>`
-    +`<section class="card"><div class="card-head"><div><h2>اثر پنل در کار روزانه</h2><p>از ورود بار تا گزارش پایان شیفت</p></div></div><div class="flow"><article>${I('leaf')}<h3>کاهش فرصت اتلاف</h3><p>اختلاف خرید، کسری شمارش و ارزش دورریز جداگانه دیده می‌شوند تا بررسی از همان روز شروع شود.</p></article><article>${I('truck')}<h3>ردیابی دقیق مواد</h3><p>رسید، حواله مقصد و مصرف سفارش کنار هم مسیر هر ماده را نشان می‌دهند.</p></article><article>${I('clock')}<h3>زمان کمتر برای گزارش</h3><p>با ثبت سفارش، موجودی و تحلیل صندوق به‌روز می‌شوند و گزارش آماده چاپ است.</p></article></div></section>`;
+ const m=metrics(),inventoryRows=stockKeys.map(k=>[E(material[k][0]),unit(k,balance(data,b,day)[k]),money(balance(data,b,day)[k]*material[k][3])]);
+ const useRows=stockKeys.map(k=>[k,sum(rec('sale'),x=>(x.recipe[k]||0)*x.qty)]).filter(([,q])=>q>0).map(([k,q])=>[E(material[k][0]),unit(k,q),money(q*material[k][3])]);
+ return head('گزارش کارفرما','خلاصه تصمیم‌گیری بر اساس بازه و شعبه انتخابی؛ مبالغ به تومان.',btn('خروجی CSV','export-report','','download')+btn('چاپ / ذخیره PDF','print','primary','download'))
+ +info('همه اعداد از داده محلی همین دمو محاسبه شده‌اند. بهای مواد، ارزش مرجع نمونه است؛ این گزارش سود خالص یا حسابداری مالی نیست.')
+ +statRow(stat('فروش دوره',N(m.sales),'تومان','جمع فروش‌های بازه','wallet'),stat('بهای مواد فروش',N(m.cost),'تومان','بر پایه پورشن ثابت فروش','plate'),stat('دورریز',N(m.waste),'تومان','مصرف کارکنان در این عدد نیست','leaf'),stat('حاشیه مواد',N(m.sales-m.cost),'تومان','فروش منهای بهای مرجع مواد؛ قبل سایر هزینه‌ها','report'))
+ +`<div class="grid">${card('گزارش موجودی','مانده در پایان بازه؛ مبنای قیمت مرجع نمونه',table(['ماده','مانده','ارزش مرجع'],inventoryRows))}${card('گزارش مصرف فروش','جمع مواد در پورشن ثبت‌شده فروش‌های بازه',table(['ماده','مصرف','بهای مرجع'],useRows))}</div>`
+ +card('گزارش خرید','فقط رسیدهای دریافت‌شده؛ درخواست تأییدنشده خرید قطعی نیست.',table(['مرجع','ماده','دریافت','نرخ','ارزش'],rec('receive').map(x=>[ref(x),E(material[x.m][0]),unit(x.m,x.qty),money(x.price),money(x.qty*x.price)])))
+ +card('گزارش دورریز و کارکنان','هر ردیف فقط یک بار از موجودی کم می‌شود.',table(['ماده','نوع','مقدار','بهای مرجع'],rec('waste').map(x=>[E(material[x.m][0]),E(x.use),unit(x.m,x.qty),money(referenceCost(x))])))+branchPerformance();
 }
-const pages={overview,inventory,distribution,menu:menuPage,cash,audit,waste,report};
+function purchasePanel(){
+ const stateNames={draft:'پیش‌نویس',submitted:'در انتظار بررسی',reviewed:'بررسی‌شده',approved:'تأیید نمایشی',received:'دریافت‌شده',partially_received:'دریافت جزئی'};
+ return card('درخواست‌ها و سفارش‌های خرید','گردش تأیید در این مرورگر شبیه‌سازی می‌شود؛ کنترل نقش واقعی فعال نیست.',table(['مرجع','ماده','مقدار','مبلغ پیشنهادی','وضعیت','اقدام بعدی'],purchaseList().map(x=>[E(x.ref),E(material[x.m][0]),unit(x.m,x.qty),money(x.qty*x.price),badge(stateNames[x.status]||x.status,x.status==='submitted'?'warn':''),x.status==='draft'?btn('ارسال برای بررسی','purchase-submit:'+x.id,'mini'):x.status==='submitted'?btn('بررسی درخواست','purchase-review:'+x.id,'mini'):x.status==='reviewed'?btn('تأیید نمایشی سفارش','purchase-approve:'+x.id,'mini'):['approved','partially_received'].includes(x.status)?btn('ثبت دریافت مرتبط','purchase-receive:'+x.id,'mini'):badge('رسید مرتبط ثبت شد')])));
+}
+function presentation(){
+ const m=metrics(), steps=['درخواست خرید','بررسی درخواست','تأیید نمایشی سفارش','دریافت در انبار مرکزی','پخش به شعبه','ثبت سفارش و مصرف','ثبت دورریز','گزارش مدیر'];
+ return head('ارائه به مالک مجموعه','از یک درخواست تا اثر آن روی موجودی و هزینه؛ مسیر مرور پیشنهادی کمتر از پنج دقیقه.',btn('بازگشت به داشبورد','go:overview','primary','arrow'))
+ +`<section class="presentation-intro"><span class="eyebrow">طنجه · مدیریت عملیات رستورانی</span><h2>اطلاعات پراکنده، به یک مسیر قابل توضیح تبدیل می‌شوند.</h2><p>این نمونه نشان می‌دهد خرید، دریافت، پخش، فروش و مصرف چگونه کنار هم قرار می‌گیرند. هدف، دیدن سریع اختلاف‌ها و کاهش زمان جمع‌بندی است؛ میزان صرفه‌جویی هنوز اندازه‌گیری نشده است.</p><div class="actions">${btn('اجرای سناریو از خرید','go:inventory','primary','arrow')}${btn('فضای نمونه مستقل','sample-space','','plus')}</div></section>`
+ +card('سناریوی قابل اجرا','برای نمایش زنده: درخواست ۱۰ کیلو گوشت، دریافت ۱۰، پخش ۵ به شعبه، فروش ۲ پرس و دورریز ۰٫۱ کیلو. هر مرحله را با مرجع مشخص ثبت کنید.',`<ol class="scenario">${steps.map((x,i)=>`<li><span>${N(i+1)}</span><strong>${x}</strong></li>`).join('')}</ol><p class="muted">در منوی طنجه، کادیش کباب با ۰٫۲۲ کیلو گوشت در هر پرس تعریف شده است؛ دو پرس ۰٫۴۴ کیلو مصرف می‌کند. اثر خالص این سناریو بر موجودی شعبه: ۵ − ۰٫۴۴ − ۰٫۱ = ۴٫۴۶ کیلو افزایش.</p>`)
+ +`<div class="grid">${card('امروز در همین دمو','واقعاً قابل اجرا در مرورگر',`<ul class="plain-list"><li>ثبت دستی، پورشن، دریافت و پخش محلی</li><li>محاسبه فروش، مواد، دورریز و گزارش مشترک</li><li>ورود متن با پیش‌نمایش و خروجی CSV</li><li>تاریخچه فعالیت محلی و تأییدهای شبیه‌سازی‌شده</li></ul>`)}${card('در معماری نسخه عملیاتی پیش‌بینی شده','در این دمو فعال نیست',`<ul class="plain-list"><li>حساب کارکنان و احراز هویت واقعی</li><li>اعمال نقش و محدوده شعبه در Backend</li><li>دیتابیس مرکزی و دفتر موجودی قابل اتکا</li><li>Audit امن، پشتیبان‌گیری و بازیابی آزموده‌شده</li></ul>`)}</div>`
+ +card('نقش‌ها و کنترل مدیریتی','توضیح طراحی آینده؛ این جدول مجوز واقعی ایجاد نمی‌کند.',table(['نقش پیشنهادی','مسئولیت'],[['مالک / مدیر عملیات','مشاهده کل مجموعه و تأییدهای مدیریتی'],['مسئول خرید','درخواست، سفارش و اسناد تأمین'],['انباردار و تحویل‌گیرنده شعبه','شمارش مستقل و ثبت دریافت'],['مسئول آشپزخانه / صندوق','پورشن، مصرف، ضایعات و فروش'],['بازرس','مرور اطلاعات و تاریخچه با دسترسی مجاز']]))
+ +card('فعالیت‌های همین مرورگر','قابل ویرایش و حذف در مرورگر؛ Audit امن سازمانی نیست.',table(['زمان','شرح','مرجع'],(data.activity||[]).slice().reverse().slice(0,12).map(x=>[new Intl.DateTimeFormat('fa-IR',{dateStyle:'short',timeStyle:'short'}).format(new Date(x.at)),E(x.label),E(x.ref||'—')])))
+ +card('مسیر تبدیل به نسخه عملیاتی','نیازمند تأیید دامنه و تصمیم‌های واقعی مدیران',`<ol class="roadmap">${['تأیید طرح','کشف عملیات واقعی','طراحی نهایی','پیاده‌سازی Backend و Database','تست و پایلوت'].map(x=>`<li>${E(x)}</li>`).join('')}</ol>`);
+}
+const pages={overview,inventory,distribution,menu:menuPage,cash,audit,waste,report,presentation};
 function render(focus=false){
-  $('rail').innerHTML=`<div class="brand"><div class="mark">${I('mark',28)}</div><div><strong>طنجه</strong><small lang="en" dir="ltr">TANJE GROUP</small></div></div><div class="nav-label">عملیات روزانه</div><nav class="nav" aria-label="عملیات روزانه">${Object.entries(views).slice(0,5).map(nav).join('')}</nav><div class="nav-label">کنترل و گزارش</div><nav class="nav" aria-label="کنترل و گزارش">${Object.entries(views).slice(5).map(nav).join('')}</nav><div class="rail-bottom"><span class="dot"></span>محیط نمایشی مدیریت<br>طراحی برای مجموعه‌های طنجه</div>`;
+  $('rail').innerHTML=`<div class="brand"><div class="mark">${I('mark',28)}</div><div><strong>طنجه</strong><small lang="en" dir="ltr">TANJE GROUP</small></div></div><div class="nav-label">عملیات روزانه</div><nav class="nav" aria-label="عملیات روزانه">${Object.entries(views).slice(0,5).map(nav).join('')}</nav><div class="nav-label">کنترل و گزارش</div><nav class="nav" aria-label="کنترل و گزارش">${Object.entries(views).slice(5).map(nav).join('')}</nav><nav class="nav">${nav(['presentation',['ارائه به مالک','report']])}</nav><div class="rail-bottom"><span class="dot"></span>محیط نمایشی مدیریت<br>طراحی برای مجموعه‌های طنجه</div>`;
   $('branch').value=b;
   $('day').value=day;
   $('date-label').innerHTML=I('calendar',15)+' '+D(day);
   $('notifications').innerHTML=I('bell',19)+(alerts().length?'<b></b>':'');
-  $('page').innerHTML=pages[view]();
+  $('page').innerHTML=(storageIssue?`<div class="storage-warning" role="alert">${E(storageIssue)} ${btn('خروجی داده محفوظ','export-backup')} ${btn('فضای ارائه مستقل','sample-space')}</div>`:'')+pages[view]();
+  $('period-start').value=periodStart;
+  $('workspace-label').textContent=key===presentationKey?'فضای نمونه مستقل':'فضای محلی مرورگر';
   if(focus)$('page').focus({preventScroll:true});
 }
 function nav([v,[label,icon]]){
@@ -235,7 +264,8 @@ const qtyField=(caption='مقدار',min='0.001')=>label(caption,num('qty',min,'
 const reference=()=>label('شناسه مرجع',input('ref','text','maxlength="50"'));
 const formatGuide=(name,help,example)=>label(name,`<small>${E(help)}</small><textarea name="rows" dir="auto" required placeholder="${E(example)}"></textarea>`,true);
 const forms={
- receive:['ثبت بار ورودی','ثبت خرید و شمارش مستقل تحویل به انبار مرکزی.',()=>dateField()+label('ماده اولیه',chooseMaterial())+label('مقدار ثبت‌شده توسط خرید',num('ordered',0,'.001'))+qtyField('مقدار واقعی تحویل',0)+label('بهای واحد (تومان)',num('price'))+label('بودجه تخصیصی (تومان)',num('budget'))+label('مبالغ تسویه‌شده مستند (تومان)',num('other',0,'1','value="0"'))+reference()+label('تأمین‌کننده / توضیح',desc(),true)],
+ purchase:['درخواست خرید نمونه','درخواست به شعبه انتخابی مرتبط است و پس از بررسی و تأیید نمایشی، دریافت جداگانه دارد.',()=>dateField()+label('ماده اولیه',chooseMaterial())+qtyField()+label('نرخ پیشنهادی واحد (تومان)',num('price'))+reference()+label('تأمین‌کننده پیشنهادی',desc('supplier',true))],
+ receive:['ثبت بار ورودی','ثبت خرید و شمارش مستقل تحویل به انبار مرکزی.',()=>dateField()+label('ماده اولیه',chooseMaterial())+label('مقدار ثبت‌شده توسط خرید',num('ordered',0,'.001'))+qtyField('مقدار واقعی تحویل','.001')+label('بهای واحد (تومان)',num('price'))+label('بودجه تخصیصی (تومان)',num('budget'))+label('مبالغ تسویه‌شده مستند (تومان)',num('other',0,'1','value="0"'))+reference()+label('تأمین‌کننده / توضیح',desc(),true)],
  move:['ثبت حواله پخش','موجودی از انبار مرکزی به مجموعه انتخابی منتقل می‌شود.',()=>dateField()+label('ماده اولیه',chooseMaterial())+qtyField()+reference()+label('پخش‌کننده / توضیح',desc('note',true),true)],
  moveCsv:['ورود گزارش پخش‌کننده','هر خط یک ردیف حواله. تمام ردیف‌ها با هم بررسی و ثبت می‌شوند.',()=>dateField()+formatGuide('ردیف‌های گزارش','ترتیب ستون‌ها با | جدا شود: نام ماده | نام مجموعه | مقدار | شناسه حواله | پخش‌کننده',`برنج ایرانی | ${branches[b]} | ۵ | پخش-۴ | پخش صبح`)],
  sale:['ثبت سفارش','ثبت فروش و کسر مواد از موجودی همین مجموعه.',()=>dateField()+label('آیتم منو',chooseItem())+label('تعداد آیتم',num('qty',1))+label('قیمت واقعی واحد (تومان)',num('price'))+label('پرداخت',select('method',options(salesTypes)))+reference()],
@@ -249,14 +279,17 @@ let current, editor;
 function openForm(type,item){
   current=type;
   editor=item;
+  verify(forms[type],'این فرم پشتیبانی نمی‌شود.');
   const [title,sub,fields]=forms[type];
   $('entry').innerHTML=`<div class="dialog-head"><div><h2 id="dialog-title">${E(title)}</h2><p class="muted">${E(sub)}</p></div><button type="button" class="iconbtn" data-act="close" aria-label="بستن">${I('close')}</button></div><div class="fields">${fields(item)}</div><div id="error" class="error" role="alert"></div><div class="dialog-foot">${btn('انصراف','close')}<button class="btn primary" type="submit">${I('check',15)} ذخیره</button></div>`;
   $('dialog').setAttribute('aria-labelledby','dialog-title');
   if(type==='sale'){
     const form=$('entry');
-    const fill=()=>{form.elements.price.value=data.menu[b].find(x=>x.id===form.elements.item.value).price};
-    form.elements.item.addEventListener('change',fill);fill();
+    const itemSelect=form.querySelector('select[name="item"]'), priceInput=form.querySelector('input[name="price"]');
+    const fill=()=>{const selected=data.menu[b].find(x=>x.id===itemSelect?.value);if(selected&&priceInput)priceInput.value=selected.price;else{$('error').textContent='آیتم قابل انتخابی در منو نیست؛ ابتدا آیتم و پورشن را تعریف کنید.';form.querySelector('[type="submit"]').disabled=true;}};
+    if(itemSelect)itemSelect.addEventListener('change',fill);fill();
   }
+  importPreviewHash='';formConsumed=false;
   $('dialog').showModal();
 }
 function say(text){
@@ -291,6 +324,7 @@ function ensureStock(state,places,date){
   }
 }
 function applyEntry(state,f){
+  if(current==='purchase'){verify(f.ref&&f.supplier,'مرجع و تأمین‌کننده لازم است.');state.purchases??=[];verify(!state.purchases.some(x=>x.b===b&&x.ref===f.ref),'مرجع درخواست تکراری است.');verify(f.date&&/^\d{4}-\d{2}-\d{2}$/.test(f.date)&&Number.isFinite(Date.parse(f.date+'T12:00:00Z')),'تاریخ معتبر لازم است.');state.purchases.push({id:crypto.randomUUID(),b,date:f.date,m:f.m,qty:numeric(f.qty,.001),price:numeric(f.price,0,true),supplier:f.supplier,ref:f.ref,status:'draft',sample:key===presentationKey});return;}
   const date=f.date, ref=f.ref;
   const rows=[];
   if(current==='recipe'){
@@ -311,12 +345,15 @@ function applyEntry(state,f){
     return;
   }
   verify(date&&date>='2020-01-01'&&Number.isFinite(Date.parse(date+'T12:00:00Z')),'تاریخ معتبر وارد کنید.');
-  const base={type:current,b,date};
-  if(current==='receive')rows.push({...base,m:f.m,qty:numeric(f.qty),ordered:numeric(f.ordered),price:numeric(f.price,0,true),budget:numeric(f.budget,0,true),other:numeric(f.other,0,true),note:f.note,ref});
+  const base={type:current,b,date,id:crypto.randomUUID(),sample:key===presentationKey};
+  if(linkedPurchase&&current==='receive'){const po=(state.purchases||[]).find(x=>x.id===linkedPurchase);verify(po&&['approved','partially_received'].includes(po.status)&&po.b===b,'سفارش مرتبط دیگر آماده دریافت نیست.');verify(po.m===f.m,'ماده دریافت باید با سفارش مرتبط یکسان باشد.');const already=sum(state.records.filter(x=>x.type==='receive'&&x.purchaseId===po.id),x=>x.qty);verify(numeric(f.qty,.001)<=round(po.qty-already),'دریافت نمی‌تواند از مانده سفارش بیشتر باشد.');base.purchaseId=po.id;po.status=round(already+numeric(f.qty))===po.qty?'received':'partially_received';}
+  if(['receive','move','count','waste'].includes(current))verify(stockKeys.includes(f.m),'ماده اولیه معتبر نیست.');
+  if(current==='receive')rows.push({...base,m:f.m,qty:numeric(f.qty,.001),ordered:numeric(f.ordered),price:numeric(f.price,0,true),budget:numeric(f.budget,0,true),other:numeric(f.other,0,true),note:f.note,ref});
   if(current==='move')rows.push({...base,m:f.m,qty:numeric(f.qty,.001),note:f.note,ref});
   if(current==='sale')rows.push(saleRecord(state.menu[b].find(x=>x.id===f.item),f.qty,f.price,f.method,date,ref));
   if(current==='count'){
-    state.records=state.records.filter(x=>!(x.type==='count'&&x.b===b&&x.date===date&&x.m===f.m));
+    for(const old of state.records)if(old.type==='count'&&old.b===b&&old.date===date&&old.m===f.m&&!old.supersededBy)old.supersededBy=base.id;
+    base.expected=balance(state,b,date)[f.m];
     rows.push({...base,m:f.m,qty:numeric(f.qty),staff:numeric(f.staff,1,true),note:f.note});
   }
   if(current==='waste'){
@@ -344,6 +381,7 @@ function applyEntry(state,f){
   }
   for(const row of rows){
     checkReference(state,row);
+    row.id??=crypto.randomUUID();
     state.records.push(row);
   }
   if(rows.some(x=>['move','sale','waste'].includes(x.type))){
@@ -357,17 +395,27 @@ function addCustomMaterials(){
   }
 }
 addCustomMaterials();
+let linkedPurchase=null, importPreviewHash='', formConsumed=false;
 $('entry').addEventListener('submit',e=>{
   e.preventDefault();
+  if(saving||formConsumed)return;
   const f=Object.fromEntries([...new FormData(e.target)].map(([k,v])=>[k,v.trim()]));
   try{
+    verify(!storageIssue,'ابتدا داده محفوظ را بررسی کنید یا فضای ارائه مستقل را باز کنید.');
     const last=localStorage.getItem(key);
-    const next=last?JSON.parse(last):structuredClone(data);
+    const next=last?validateState(JSON.parse(last)):structuredClone(data);
+    const preview=structuredClone(next);applyEntry(preview,f);
+    if(current.endsWith('Csv')&&importPreviewHash!==JSON.stringify(f)){importPreviewHash=JSON.stringify(f);$('error').innerHTML='<strong>پیش‌نمایش معتبر: '+N(preview.records.length-next.records.length)+' ردیف</strong><p>هیچ ردیفی هنوز ثبت نشده است. برای ثبت همه ردیف‌ها، دوباره دکمه ثبت نهایی را بزنید.</p>';e.target.querySelector('[type="submit"]').textContent='ثبت نهایی ردیف‌ها';return;}
+    if(['waste','count','receive'].includes(current)&&!confirm('ثبت '+forms[current][0]+' در داده محلی این مرورگر انجام شود؟'))return;
+    saving=true;e.target.querySelector('[type="submit"]').disabled=true;
     applyEntry(next,f);
+    next.activity??=[];next.activity.push({at:new Date().toISOString(),label:forms[current][0]+' · ثبت محلی',ref:f.ref||''});
     localStorage.setItem(key,JSON.stringify(next));
+    formConsumed=true;
     data=next;
     addCustomMaterials();
-    if(f.date)day=f.date;
+    if(f.date){day=f.date;if(periodStart>day)periodStart=day;}
+    linkedPurchase=null;
     $('dialog').close();
     if(current==='receive')view='inventory';
     if(current.startsWith('move'))view='distribution';
@@ -375,10 +423,13 @@ $('entry').addEventListener('submit',e=>{
     if(current==='count')view='audit';
     if(current==='waste')view='waste';
     render(true);
-    say('رکورد ذخیره شد.');
+    if(current==='purchase')view='inventory';
+    render();
+    say('در همین مرورگر ذخیره شد.');
   }catch(err){
-    $('error').textContent=err.name==='QuotaExceededError'?'فضای ذخیره مرورگر پر است.':err.message;
-  }
+    $('error').textContent=err.name==='QuotaExceededError'?'فضای ذخیره مرورگر پر است؛ هیچ تغییری ثبت نشد.':err.message;
+  }finally{saving=false;const submit=$('entry').querySelector('[type="submit"]');if(submit)submit.disabled=false;}
+
 });
 function setNavOpen(open,restoreFocus=false){
   $('rail').classList.toggle('open',open);
@@ -392,14 +443,18 @@ document.addEventListener('click',e=>{
   if(!action)return;
   const [cmd,id]=action.split(':');
   if(cmd==='go'){setNavOpen(false);view=id;search='';render(true);window.scrollTo(0,0)}
-  if(cmd==='new')openForm(id);
+  if(cmd==='new'){linkedPurchase=null;openForm(id);}
   if(cmd==='recipe')openForm('recipe',data.menu[b].find(x=>x.id===id));
-  if(cmd==='close')$('dialog').close();
+  if(cmd==='close'){$('dialog').close();linkedPurchase=null;}
+  if(cmd.startsWith('purchase-'))purchaseAction(cmd,id);
+  if(cmd==='sample-space')openSampleSpace();
+  if(cmd==='export-backup'){try{downloadFile('tanje-local-backup.json',localStorage.getItem(key)||JSON.stringify(data,null,2),'application/json')}catch{say('دسترسی به ذخیره مرورگر ممکن نیست؛ اصل داده بازنویسی نشد.')}}
+  if(cmd==='export-report')exportReport();
   if(cmd==='print')window.print();
 });
 $('branch').innerHTML=Object.entries(branches).map(([k,v])=>opt(k,v)).join('');
 $('branch').addEventListener('change',e=>{b=e.target.value;search='';render()});
-$('day').addEventListener('change',e=>{if(e.target.value){day=e.target.value;render()}});
+$('day').addEventListener('change',e=>{if(e.target.value){day=e.target.value;if(periodStart>day)periodStart=day;render()}});
 $('notifications').addEventListener('click',()=>{view='audit';render(true);window.scrollTo(0,0)});
 $('toggle-nav').innerHTML=I('menu',19);
 $('toggle-nav').addEventListener('click',()=>setNavOpen(!$('rail').classList.contains('open')));
@@ -407,5 +462,27 @@ $('nav-backdrop').addEventListener('click',()=>setNavOpen(false,true));
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('rail').classList.contains('open'))setNavOpen(false,true)});
 $('page').addEventListener('change',e=>{if(e.target.id==='sort'){sort=e.target.value;render();$('sort').focus()}});
 $('page').addEventListener('input',e=>{if(e.target.id==='search'){search=e.target.value;const end=e.target.selectionStart;render();$('search').focus();$('search').setSelectionRange(end,end)}});
-window.addEventListener('storage',e=>{if(e.key===key&&e.newValue){data=JSON.parse(e.newValue);addCustomMaterials();render()}});
+window.addEventListener('storage',e=>{if(e.key===key){try{if(e.newValue){data=validateState(JSON.parse(e.newValue));storageIssue='';addCustomMaterials();render()}else{storageIssue='داده در برگه دیگری حذف شده است؛ برای جلوگیری از بازنویسی، ثبت متوقف شد.';render()}}catch{storageIssue='داده برگه دیگر معتبر نیست؛ اصل داده حفظ شده و ثبت متوقف است.';render()}}});
 render();
+
+$('period-start').addEventListener('change',e=>{if(e.target.value){periodStart=e.target.value;if(periodStart>day)day=periodStart;render()}});
+function openSampleSpace(){
+ if(!confirm('فضای نمونه مستقل باز شود؟ داده فضای فعلی حذف یا بازنویسی نمی‌شود.'))return;
+ key=presentationKey;storageIssue='';data=loadState();addCustomMaterials();view='presentation';day=today;periodStart=offset(today,-6);render();say('فضای نمونه مستقل؛ داده قبلی محفوظ است.');
+}
+function downloadFile(name,text,type){const blob=new Blob(['\ufeff',text],{type:type+';charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function exportReport(){
+ const rows=[['نوع داده','شعبه','از تاریخ','تا تاریخ','شاخص','مقدار','واحد']],m=metrics();
+ for(const [name,v] of [['فروش',m.sales],['خرید دریافتی',m.purchase],['بهای مواد فروش',m.cost],['دورریز',m.waste],['مصرف کارکنان',m.staff],['ارزش موجودی پایان',m.inventory]])rows.push(['نمونه / ثبت محلی',branches[b],periodStart,day,name,v,'تومان']);
+ const csv=rows.map(row=>row.map(v=>'"'+String(v).replace(/^[=+@-]/,"'").replace(/"/g,'""')+'"').join(',')).join('\r\n');downloadFile('tanje-demo-report.csv',csv,'text/csv');say('خروجی CSV همین بازه آماده شد.');
+}
+function purchaseAction(cmd,id){
+ try{verify(!storageIssue,'داده محلی نیازمند بررسی است.');const raw=localStorage.getItem(key),next=raw?validateState(JSON.parse(raw)):structuredClone(data),x=(next.purchases||[]).find(x=>x.id===id);verify(x&&x.b===b,'درخواست در این شعبه پیدا نشد.');
+ if(cmd==='purchase-receive'){
+ verify(['approved','partially_received'].includes(x.status),'ابتدا سفارش را تأیید نمایشی کنید.');linkedPurchase=id;openForm('receive');const f=$('entry'), remaining=round(x.qty-sum(next.records.filter(r=>r.type==='receive'&&r.purchaseId===x.id),r=>r.qty));for(const [name,value] of Object.entries({m:x.m,ordered:remaining,qty:remaining,price:x.price,budget:remaining*x.price,ref:'رسید-'+x.id.slice(-8)+'-'+(next.records.filter(r=>r.purchaseId===x.id).length+1),note:x.supplier})){const el=f.elements.namedItem(name);if(el)el.value=value;}return;
+ }
+ const transitions={'purchase-submit':['draft','submitted'],'purchase-review':['submitted','reviewed'],'purchase-approve':['reviewed','approved']},transition=transitions[cmd];verify(transition&&x.status===transition[0],'مرحله این درخواست قبلاً تغییر کرده است.');
+ if(cmd==='purchase-approve'&&!confirm('این تأیید صرفاً نمایشی و محلی است؛ ثبت شود؟'))return;
+ x.status=transition[1];next.activity??=[];next.activity.push({at:new Date().toISOString(),label:({'purchase-submit':'ارسال برای بررسی','purchase-review':'بررسی درخواست','purchase-approve':'تأیید نمایشی سفارش'})[cmd],ref:x.ref});localStorage.setItem(key,JSON.stringify(next));data=next;render();say('وضعیت محلی درخواست به‌روز شد.');
+ }catch(err){say(err.message)}
+}
